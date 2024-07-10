@@ -1023,6 +1023,7 @@ class SlidingSyncHandler:
         # Assemble a map of room ID to the `stream_ordering` of the last activity that the
         # user should see in the room (<= `to_token`)
         last_activity_in_room_map: Dict[str, int] = {}
+        to_fetch = []
         for room_id, room_for_user in sync_room_map.items():
             # If they are fully-joined to the room, let's find the latest activity
             # at/before the `to_token`.
@@ -1032,14 +1033,7 @@ class SlidingSyncHandler:
                     last_activity_in_room_map[room_id] = stream_pos
                     continue
 
-                stream = await self.store.get_rough_stream_ordering_for_room(room_id)
-
-                # If the room has no events at/before the `to_token`, this is probably a
-                # mistake in the code that generates the `sync_room_map` since that should
-                # only give us rooms that the user had membership in during the token range.
-                assert stream is not None
-
-                last_activity_in_room_map[room_id] = stream
+                to_fetch.append(room_id)
             else:
                 # Otherwise, if the user has left/been invited/knocked/been banned from
                 # a room, they shouldn't see anything past that point.
@@ -1049,6 +1043,10 @@ class SlidingSyncHandler:
                 # `invite`/`world_readable` history visibility, see
                 # https://github.com/matrix-org/matrix-spec-proposals/pull/3575#discussion_r1653045932
                 last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
+
+        for room_id, stream_pos in await self.store.rough_get_last_pos(to_fetch):
+            if stream_pos is not None:
+                last_activity_in_room_map[room_id] = stream_pos
 
         return sorted(
             sync_room_map.values(),

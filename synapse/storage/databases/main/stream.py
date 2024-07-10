@@ -80,7 +80,7 @@ from synapse.storage.databases.main.events_worker import EventsWorkerStore
 from synapse.storage.engines import BaseDatabaseEngine, PostgresEngine, Sqlite3Engine
 from synapse.storage.util.id_generators import MultiWriterIdGenerator
 from synapse.types import PersistedEventPosition, RoomStreamToken, StrSequence
-from synapse.util.caches.descriptors import cached
+from synapse.util.caches.descriptors import cached, cachedList
 from synapse.util.caches.stream_change_cache import StreamChangeCache
 from synapse.util.cancellation import cancellable
 from synapse.util.iterutils import batch_iter
@@ -1187,7 +1187,12 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
 
         return None
 
-    async def rough_get_last_pos(self, room_ids: StrSequence) -> Dict[str, int]:
+    @cachedList(
+        cached_method_name="get_rough_stream_ordering_for_room", list_name="room_ids",
+    )
+    async def rough_get_last_pos(
+        self, room_ids: StrSequence
+    ) -> Dict[str, Optional[int]]:
         def rough_get_last_pos_txn(
             txn: LoggingTransaction,
             batch: StrSequence,
