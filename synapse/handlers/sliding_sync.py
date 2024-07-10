@@ -1024,18 +1024,14 @@ class SlidingSyncHandler:
                     last_activity_in_room_map[room_id] = stream_pos
                     continue
 
-                last_event_result = await self.store.get_rough_stream_ordering_for_room(
-                    room_id
-                )
+                stream = await self.store.get_rough_stream_ordering_for_room(room_id)
 
                 # If the room has no events at/before the `to_token`, this is probably a
                 # mistake in the code that generates the `sync_room_map` since that should
                 # only give us rooms that the user had membership in during the token range.
-                assert last_event_result is not None
+                assert stream is not None
 
-                event_pos = last_event_result
-
-                last_activity_in_room_map[room_id] = event_pos.stream
+                last_activity_in_room_map[room_id] = stream
             else:
                 # Otherwise, if the user has left/been invited/knocked/been banned from
                 # a room, they shouldn't see anything past that point.
