@@ -958,7 +958,7 @@ class SlidingSyncHandler:
         # Filter by room type (space vs room, etc). A room must match one of the types
         # provided in the list. `None` is a valid type for rooms which do not have a
         # room type.
-        if filters.room_types is not None or filters.not_room_types is not None:
+        if False and (filters.room_types is not None or filters.not_room_types is not None):
             # Make a copy so we don't run into an error: `Set changed size during
             # iteration`, when we filter out and remove items
             for room_id in filtered_room_id_set.copy():

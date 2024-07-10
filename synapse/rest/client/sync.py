@@ -52,7 +52,7 @@ from synapse.http.servlet import (
     parse_string,
 )
 from synapse.http.site import SynapseRequest
-from synapse.logging.opentracing import trace_with_opname
+from synapse.logging.opentracing import log_kv, set_tag, trace_with_opname
 from synapse.rest.admin.experimental_features import ExperimentalFeature
 from synapse.types import JsonDict, Requester, StreamToken
 from synapse.types.rest.client import SlidingSyncBody
@@ -897,6 +897,10 @@ class SlidingSyncRestServlet(RestServlet):
         # in.
         body = parse_and_validate_json_object_from_request(request, SlidingSyncBody)
         logger.info("Sliding sync request: %r", body)
+        log_kv({"request_body": body})
+
+        if body.lists:
+            set_tag("sliding_sync.lists", True)
 
         sync_config = SlidingSyncConfig(
             user=user,

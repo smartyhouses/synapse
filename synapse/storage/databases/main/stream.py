@@ -82,6 +82,7 @@ from synapse.types import PersistedEventPosition, RoomStreamToken, StrSequence
 from synapse.util.caches.descriptors import cached
 from synapse.util.caches.stream_change_cache import StreamChangeCache
 from synapse.util.cancellation import cancellable
+from synapse.util.iterutils import batch_iter
 
 if TYPE_CHECKING:
     from synapse.server import HomeServer
@@ -1185,12 +1186,14 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
 
         return None
 
-
     async def rough_get_last_pos(self, room_ids: StrSequence) -> Dict[str, int]:
-        def rough_get_last_pos_Txn(
+        def rough_get_last_pos_txn(
             txn: LoggingTransaction,
+            batch: StrSequence,
         ) -> Dict[str, int]:
-            clause, args = make_in_list_sql_clause(self.database_engine, "room_id", room_ids)
+            clause, args = make_in_list_sql_clause(
+                self.database_engine, "room_id", batch
+            )
             sql = f"""
                 SELECT room_id, MAX(stream_ordering) FROM events
                 WHERE {clause}
@@ -1199,14 +1202,17 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
 
             txn.execute(sql, (args,))
 
-            return {
-                room_id: stream_ordering for room_id, stream_ordering in txn
-            }
+            return {room_id: stream_ordering for room_id, stream_ordering in txn}
 
-        return await self.db_pool.runInteraction(
-            "rough_get_last_pos",
-            rough_get_last_pos_Txn,
-        )
+        results = {}
+        for batch in batch_iter(room_ids, 100):
+            results.update(
+                await self.db_pool.runInteraction(
+                    "rough_get_last_pos", rough_get_last_pos_txn, batch
+                )
+            )
+
+        return results
 
     async def get_last_event_pos_in_room_before_stream_ordering(
         self,
