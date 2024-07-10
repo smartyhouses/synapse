@@ -1014,15 +1014,6 @@ class SlidingSyncHandler:
 
         self.store._events_stream_cache._entity_to_key
 
-        # XXX: FIXUP
-        last_activity_in_room_map = await self.store.rough_get_last_pos(
-            [
-                room_id
-                for room_id, room_for_user in sync_room_map.items()
-                if room_for_user.membership == Membership.JOIN
-            ]
-        )
-
         last_activity_in_room_map = {}
         to_fetch = []
         for room_id, room_for_user in sync_room_map.items():
@@ -1031,7 +1022,7 @@ class SlidingSyncHandler:
                 if stream_pos is not None:
                     last_activity_in_room_map[room_id] = stream_pos
                 else:
-                    to_fetch.ap(room_id)
+                    to_fetch.append(room_id)
             else:
                 last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
 
