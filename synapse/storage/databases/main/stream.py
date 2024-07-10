@@ -68,6 +68,7 @@ from synapse.api.filtering import Filter
 from synapse.events import EventBase
 from synapse.logging.context import make_deferred_yieldable, run_in_background
 from synapse.logging.opentracing import trace
+from synapse.replication.tcp.streams.events import EventsStream
 from synapse.storage._base import SQLBaseStore
 from synapse.storage.database import (
     DatabasePool,
@@ -1213,6 +1214,28 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
             )
 
         return results
+
+    @cached(max_entries=10000)
+    async def get_rough_stream_ordering_for_room(
+        self,
+        room_id: str,
+    ) -> Optional[int]:
+        def get_rough_stream_ordering_for_room_txn(
+            txn: LoggingTransaction,
+        ) -> Dict[str, int]:
+            sql = f"""
+                SELECT DISTINCT ON (room_id) room_id, stream_ordering FROM events
+                WHERE room_id = ? AND stream_ordering IS NOT NULL
+                ORDER BY room_id, stream_ordering DESC
+            """
+
+            txn.execute(sql, (room_id,))
+
+            return {room_id: stream_ordering for room_id, stream_ordering in txn}
+
+        return await self.db_pool.runInteraction(
+            "get_rough_stream_ordering_for_room", get_rough_stream_ordering_for_room_txn
+        )
 
     async def get_last_event_pos_in_room_before_stream_ordering(
         self,

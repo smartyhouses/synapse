@@ -1012,21 +1012,39 @@ class SlidingSyncHandler:
             A sorted list of room IDs by `stream_ordering` along with membership information.
         """
 
-        self.store._events_stream_cache._entity_to_key
-
-        last_activity_in_room_map = {}
-        to_fetch = []
+        # Assemble a map of room ID to the `stream_ordering` of the last activity that the
+        # user should see in the room (<= `to_token`)
+        last_activity_in_room_map: Dict[str, int] = {}
         for room_id, room_for_user in sync_room_map.items():
+            # If they are fully-joined to the room, let's find the latest activity
+            # at/before the `to_token`.
             if room_for_user.membership == Membership.JOIN:
                 stream_pos = self.store._events_stream_cache._entity_to_key.get(room_id)
                 if stream_pos is not None:
                     last_activity_in_room_map[room_id] = stream_pos
-                else:
-                    to_fetch.append(room_id)
-            else:
-                last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
+                    continue
 
-        last_activity_in_room_map.update(await self.store.rough_get_last_pos(to_fetch))
+                last_event_result = await self.store.get_rough_stream_ordering_for_room(
+                    room_id
+                )
+
+                # If the room has no events at/before the `to_token`, this is probably a
+                # mistake in the code that generates the `sync_room_map` since that should
+                # only give us rooms that the user had membership in during the token range.
+                assert last_event_result is not None
+
+                _, event_pos = last_event_result
+
+                last_activity_in_room_map[room_id] = event_pos.stream
+            else:
+                # Otherwise, if the user has left/been invited/knocked/been banned from
+                # a room, they shouldn't see anything past that point.
+                #
+                # FIXME: It's possible that people should see beyond this point in
+                # invited/knocked cases if for example the room has
+                # `invite`/`world_readable` history visibility, see
+                # https://github.com/matrix-org/matrix-spec-proposals/pull/3575#discussion_r1653045932
+                last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
 
         return sorted(
             sync_room_map.values(),
