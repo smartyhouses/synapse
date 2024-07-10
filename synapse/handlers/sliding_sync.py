@@ -34,6 +34,7 @@ from synapse.api.constants import (
 from synapse.events import EventBase
 from synapse.events.utils import strip_event
 from synapse.handlers.relations import BundledAggregations
+from synapse.logging.opentracing import start_active_span, tag_args, trace
 from synapse.storage.databases.main.stream import CurrentStateDeltaMembership
 from synapse.types import (
     JsonDict,
@@ -532,6 +533,8 @@ class SlidingSyncHandler:
         # Fetch room data
         rooms: Dict[str, SlidingSyncResult.RoomResult] = {}
 
+        @trace
+        @tag_args
         async def handle_room(room_id: str) -> None:
             room_sync_result = await self.get_room_sync_data(
                 user=sync_config.user,
@@ -544,7 +547,8 @@ class SlidingSyncHandler:
 
             rooms[room_id] = room_sync_result
 
-        await concurrently_execute(handle_room, relevant_room_map, 10)
+        with start_active_span("sliding_sync.generate_room_entries"):
+            await concurrently_execute(handle_room, relevant_room_map, 10)
 
         extensions = await self.get_extensions_response(
             sync_config=sync_config, to_token=to_token
