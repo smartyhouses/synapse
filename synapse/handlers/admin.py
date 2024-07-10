@@ -125,7 +125,7 @@ class AdminHandler:
         # Get all rooms the user is in or has been in
         rooms = await self._store.get_rooms_for_local_user_where_membership_is(
             user_id,
-            membership_list=Membership.LIST,
+            membership_list=frozenset(Membership.LIST),
         )
 
         # We only try and fetch events for rooms the user has been in. If

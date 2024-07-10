@@ -361,7 +361,7 @@ class RoomMemberWorkerStore(EventsWorkerStore, CacheInvalidationWorkerStore):
         """
 
         return await self.get_rooms_for_local_user_where_membership_is(
-            user_id, [Membership.INVITE]
+            user_id, (Membership.INVITE,)
         )
 
     async def get_knocked_at_rooms_for_local_user(
@@ -377,7 +377,7 @@ class RoomMemberWorkerStore(EventsWorkerStore, CacheInvalidationWorkerStore):
         """
 
         return await self.get_rooms_for_local_user_where_membership_is(
-            user_id, [Membership.KNOCK]
+            user_id, (Membership.KNOCK,)
         )
 
     async def get_invite_for_local_user_in_room(
@@ -398,6 +398,7 @@ class RoomMemberWorkerStore(EventsWorkerStore, CacheInvalidationWorkerStore):
                 return invite
         return None
 
+    @cached(max_entries=1000, uncached_args=["excluded_rooms"], tree=True)
     async def get_rooms_for_local_user_where_membership_is(
         self,
         user_id: str,

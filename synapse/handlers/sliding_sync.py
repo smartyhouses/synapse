@@ -605,7 +605,7 @@ class SlidingSyncHandler:
             #
             # We will filter out the rooms that don't belong below (see
             # `filter_membership_for_sync`)
-            membership_list=Membership.LIST,
+            membership_list=frozenset(Membership.LIST),
             excluded_rooms=self.rooms_to_exclude_globally,
         )
 
