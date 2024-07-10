@@ -1044,7 +1044,9 @@ class SlidingSyncHandler:
                 # https://github.com/matrix-org/matrix-spec-proposals/pull/3575#discussion_r1653045932
                 last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
 
-        for room_id, stream_pos in await self.store.rough_get_last_pos(to_fetch):
+        for room_id, stream_pos in (
+            await self.store.rough_get_last_pos(to_fetch)
+        ).items():
             if stream_pos is not None:
                 last_activity_in_room_map[room_id] = stream_pos
 
