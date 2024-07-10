@@ -1012,10 +1012,30 @@ class SlidingSyncHandler:
             A sorted list of room IDs by `stream_ordering` along with membership information.
         """
 
+        self.store._events_stream_cache._entity_to_key
+
         # XXX: FIXUP
         last_activity_in_room_map = await self.store.rough_get_last_pos(
-            sync_room_map.keys()
+            [
+                room_id
+                for room_id, room_for_user in sync_room_map.items()
+                if room_for_user.membership == Membership.JOIN
+            ]
         )
+
+        last_activity_in_room_map = {}
+        to_fetch = []
+        for room_id, room_for_user in sync_room_map.items():
+            if room_for_user.membership == Membership.JOIN:
+                stream_pos = self.store._events_stream_cache._entity_to_key.get(room_id)
+                if stream_pos is not None:
+                    last_activity_in_room_map[room_id] = stream_pos
+                else:
+                    to_fetch.ap(room_id)
+            else:
+                last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
+
+        last_activity_in_room_map.update(await self.store.rough_get_last_pos(to_fetch))
 
         return sorted(
             sync_room_map.values(),
