@@ -1033,7 +1033,7 @@ class SlidingSyncHandler:
                 # only give us rooms that the user had membership in during the token range.
                 assert last_event_result is not None
 
-                _, event_pos = last_event_result
+                event_pos = last_event_result
 
                 last_activity_in_room_map[room_id] = event_pos.stream
             else:
