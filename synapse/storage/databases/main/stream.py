@@ -1224,14 +1224,16 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
             txn: LoggingTransaction,
         ) -> Dict[str, int]:
             sql = f"""
-                SELECT DISTINCT ON (room_id) room_id, stream_ordering FROM events
-                WHERE room_id = ? AND stream_ordering IS NOT NULL
-                ORDER BY room_id, stream_ordering DESC
+                SELECT MAX(stream_ordering) FROM events
+                WHERE room_id = ?
             """
 
             txn.execute(sql, (room_id,))
 
-            return {room_id: stream_ordering for room_id, stream_ordering in txn}
+            row = txn.fetchone()
+            if row:
+                return row[0]
+            return None
 
         return await self.db_pool.runInteraction(
             "get_rough_stream_ordering_for_room", get_rough_stream_ordering_for_room_txn
