@@ -1195,12 +1195,12 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
                 self.database_engine, "room_id", batch
             )
             sql = f"""
-                SELECT room_id, MAX(stream_ordering) FROM events
-                WHERE {clause}
-                GROUP BY room_id
+                SELECT DISTINCT ON (room_id) room_id, stream_ordering FROM events
+                WHERE {clause} AND stream_ordering IS NOT NULL
+                ORDER BY room_id, stream_ordering DESC
             """
 
-            txn.execute(sql, (args,))
+            txn.execute(sql, args)
 
             return {room_id: stream_ordering for room_id, stream_ordering in txn}
 
