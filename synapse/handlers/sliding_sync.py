@@ -286,6 +286,8 @@ class StateValues:
     # `state_key`.
     LAZY: Final = "$LAZY"
 
+    ME: Final = "$ME"
+
 
 @attr.s(slots=True, frozen=True, auto_attribs=True)
 class _RoomMembershipForUser:
@@ -466,7 +468,6 @@ class SlidingSyncHandler:
                 # Also see `StateFilter.must_await_full_state(...)` for comparison
                 lazy_loading = (
                     membership_state_keys is not None
-                    and len(membership_state_keys) == 1
                     and StateValues.LAZY in membership_state_keys
                 )
 
@@ -1337,6 +1338,13 @@ class SlidingSyncHandler:
 
                             # FIXME: We probably also care about invite, ban, kick, targets, etc
                             # but the spec only mentions "senders".
+                        elif (
+                            state_type == EventTypes.Member
+                            and state_key == StateValues.ME
+                        ):
+                            required_state_types.append(
+                                    (EventTypes.Member, user.to_string())
+                                )
                         else:
                             required_state_types.append((state_type, state_key))
 
