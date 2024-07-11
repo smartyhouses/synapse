@@ -310,7 +310,7 @@ class CacheInvalidationWorkerStore(SQLBaseStore):
         if not backfilled:
             self._events_stream_cache.entity_has_changed(room_id, stream_ordering)  # type: ignore[attr-defined]
             self._attempt_to_invalidate_cache(
-                "get_rough_stream_ordering_for_room", (room_id,)
+                "get_max_stream_ordering_in_room", (room_id,)
             )
 
         if redacts:

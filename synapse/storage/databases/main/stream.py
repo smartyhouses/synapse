@@ -79,7 +79,12 @@ from synapse.storage.database import (
 from synapse.storage.databases.main.events_worker import EventsWorkerStore
 from synapse.storage.engines import BaseDatabaseEngine, PostgresEngine, Sqlite3Engine
 from synapse.storage.util.id_generators import MultiWriterIdGenerator
-from synapse.types import JsonDict, PersistedEventPosition, RoomStreamToken, StrSequence
+from synapse.types import (
+    JsonDict,
+    PersistedEventPosition,
+    RoomStreamToken,
+    StrCollection,
+)
 from synapse.util.caches.descriptors import cached, cachedList
 from synapse.util.caches.stream_change_cache import StreamChangeCache
 from synapse.util.cancellation import cancellable
@@ -1192,63 +1197,50 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
         return None
 
     @cachedList(
-        cached_method_name="get_rough_stream_ordering_for_room",
+        cached_method_name="get_max_stream_ordering_in_room",
         list_name="room_ids",
     )
-    async def rough_get_last_pos(
-        self, room_ids: StrSequence
-    ) -> Mapping[str, Optional[int]]:
-        def rough_get_last_pos_txn(
-            txn: LoggingTransaction,
-            batch: StrSequence,
-        ) -> Mapping[str, Optional[int]]:
-            clause, args = make_in_list_sql_clause(
-                self.database_engine, "room_id", batch
-            )
-            sql = f"""
-                SELECT room_id, last_stream_ordering
-                FROM sliding_sync_room_metadata
-                WHERE {clause}
-            """
+    async def get_max_stream_ordering_in_rooms(
+        self, room_ids: StrCollection
+    ) -> Mapping[str, Optional[PersistedEventPosition]]:
+        """Get the positions for the latest event in a room.
 
-            txn.execute(sql, args)
+        A batched version of `get_max_stream_ordering_in_room`.
+        """
+        rows = await self.db_pool.simple_select_many_batch(
+            table="sliding_sync_room_metadata",
+            column="room_id",
+            iterable=room_ids,
+            retcols=("room_id", "instance_name", "last_stream_ordering"),
+            desc="get_max_stream_ordering_in_rooms",
+        )
 
-            return {room_id: stream_ordering for room_id, stream_ordering in txn}
-
-        results = {}
-        for batch in batch_iter(room_ids, 100):
-            results.update(
-                await self.db_pool.runInteraction(
-                    "rough_get_last_pos", rough_get_last_pos_txn, batch
-                )
-            )
-
-        return results
+        return {
+            room_id: PersistedEventPosition(instance_name, stream)
+            for room_id, instance_name, stream in rows
+        }
 
     @cached(max_entries=10000)
-    async def get_rough_stream_ordering_for_room(
+    async def get_max_stream_ordering_in_room(
         self,
         room_id: str,
-    ) -> Optional[int]:
-        def get_rough_stream_ordering_for_room_txn(
-            txn: LoggingTransaction,
-        ) -> Optional[int]:
-            sql = """
-                SELECT last_stream_ordering
-                FROM sliding_sync_room_metadata
-                WHERE room_id = ?
-            """
+    ) -> Optional[PersistedEventPosition]:
+        """Get the position for the latest event in a room.
 
-            txn.execute(sql, (room_id,))
-
-            row = txn.fetchone()
-            if row:
-                return row[0]
+        Note: this may be after the current token for the room stream on this
+        process (e.g. due to replication lag)
+        """
+        row = await self.db_pool.simple_select_one(
+            table="sliding_sync_room_metadata",
+            retcols=("instance_name", "last_stream_ordering"),
+            keyvalues={"room_id": room_id},
+            allow_none=True,
+            desc="get_max_stream_ordering_in_room",
+        )
+        if not row:
             return None
 
-        return await self.db_pool.runInteraction(
-            "get_rough_stream_ordering_for_room", get_rough_stream_ordering_for_room_txn
-        )
+        return PersistedEventPosition(instance_name=row[0], stream=row[1])
 
     async def get_last_event_pos_in_room_before_stream_ordering(
         self,
@@ -2056,17 +2048,43 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
         previous_room = progress.get("previous_room", "")
 
         def _sliding_sync_room_metadata_bg_update_txn(txn: LoggingTransaction) -> int:
-            sql = """
-                SELECT room_id, MAX(stream_ordering) FROM events
-                WHERE stream_ordering IS NOT NULL
-                    AND room_id IN (
-                        SELECT room_id FROM rooms
-                        WHERE room_id > ?
-                        ORDER BY room_id ASC
-                        LIMIT ?
-                    )
-                GROUP BY room_id
-            """
+            # Both these queries are just getting the most recent
+            # instance_name/stream ordering for the next N rooms.
+            if isinstance(self.database_engine, PostgresEngine):
+                sql = """
+                    SELECT room_id, instance_name, stream_ordering FROM rooms AS r,
+                    LATERAL (
+                        SELECT instance_name, stream_ordering
+                        FROM events WHERE events.room_id = r.room_id
+                        ORDER BY stream_ordering DESC
+                        LIMIT 1
+                    ) e
+                    WHERE r.room_id > ?
+                    ORDER BY r.room_id ASC
+                    LIMIT ?
+                """
+            else:
+                sql = """
+                    SELECT
+                        room_id,
+                        (
+                            SELECT instance_name
+                            FROM events WHERE events.room_id = r.room_id
+                            ORDER BY stream_ordering DESC
+                            LIMIT 1
+                        ),
+                        (
+                            SELECT stream_ordering
+                            FROM events WHERE events.room_id = r.room_id
+                            ORDER BY stream_ordering DESC
+                            LIMIT 1
+                        )
+                    FROM rooms AS r
+                    WHERE r.room_id > ?
+                    ORDER BY r.room_id ASC
+                    LIMIT ?
+                """
+
             txn.execute(sql, (previous_room, batch_size))
             rows = txn.fetchall()
             if not rows:
@@ -2076,9 +2094,15 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
                 txn,
                 table="sliding_sync_room_metadata",
                 key_names=("room_id",),
-                key_values=[(room_id,) for room_id, _ in rows],
+                key_values=[(room_id,) for room_id, _, _ in rows],
                 value_names=("last_stream_ordering",),
-                value_values=[(stream,) for _, stream in rows],
+                value_values=[
+                    (
+                        instance_name or "master",
+                        stream,
+                    )
+                    for _, instance_name, stream in rows
+                ],
             )
 
             self.db_pool.updates._background_update_progress_txn(

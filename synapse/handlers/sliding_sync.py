@@ -1033,10 +1033,11 @@ class SlidingSyncHandler:
             # If they are fully-joined to the room, let's find the latest activity
             # at/before the `to_token`.
             if room_for_user.membership == Membership.JOIN:
-                stream_pos = self.store._events_stream_cache._entity_to_key.get(room_id)
-                if stream_pos is not None:
-                    last_activity_in_room_map[room_id] = stream_pos
-                    continue
+                stream = self.store._events_stream_cache._entity_to_key.get(room_id)
+                if stream is not None:
+                    if stream <= to_token.room_key.stream:
+                        last_activity_in_room_map[room_id] = stream
+                        continue
 
                 to_fetch.append(room_id)
             else:
@@ -1049,11 +1050,15 @@ class SlidingSyncHandler:
                 # https://github.com/matrix-org/matrix-spec-proposals/pull/3575#discussion_r1653045932
                 last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
 
-        for room_id, stream_pos in (
-            await self.store.rough_get_last_pos(to_fetch)
-        ).items():
-            if stream_pos is not None:
-                last_activity_in_room_map[room_id] = stream_pos
+        ordering_map = await self.store.get_max_stream_ordering_in_rooms(to_fetch)
+        for room_id, stream_pos in ordering_map.items():
+            if stream_pos is None:
+                continue
+
+            if stream_pos.persisted_after(to_token.room_key):
+                continue
+
+            last_activity_in_room_map[room_id] = stream_pos.stream
 
         for room_id in sync_room_map.keys() - last_activity_in_room_map.keys():
             # TODO: Handle better

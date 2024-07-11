@@ -11,9 +11,13 @@
 -- See the GNU Affero General Public License for more details:
 -- <https://www.gnu.org/licenses/agpl-3.0.html>.
 
+-- A table that maps from room ID to metadata useful for sliding sync.
 CREATE TABLE sliding_sync_room_metadata (
     room_id TEXT NOT NULL PRIMARY KEY,
-    last_stream_ordering BIGINT
+
+    -- The instance_name / stream ordering of the last event in the room.
+    instance_name TEXT NOT NULL,
+    last_stream_ordering BIGINT NOT NULL
 );
 
 INSERT INTO background_updates (ordering, update_name, progress_json) VALUES
