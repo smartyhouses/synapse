@@ -50,6 +50,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Mapping,
     Optional,
     Set,
     Tuple,
@@ -68,7 +69,6 @@ from synapse.api.filtering import Filter
 from synapse.events import EventBase
 from synapse.logging.context import make_deferred_yieldable, run_in_background
 from synapse.logging.opentracing import trace
-from synapse.replication.tcp.streams.events import EventsStream
 from synapse.storage._base import SQLBaseStore
 from synapse.storage.database import (
     DatabasePool,
@@ -79,7 +79,7 @@ from synapse.storage.database import (
 from synapse.storage.databases.main.events_worker import EventsWorkerStore
 from synapse.storage.engines import BaseDatabaseEngine, PostgresEngine, Sqlite3Engine
 from synapse.storage.util.id_generators import MultiWriterIdGenerator
-from synapse.types import PersistedEventPosition, RoomStreamToken, StrSequence
+from synapse.types import JsonDict, PersistedEventPosition, RoomStreamToken, StrSequence
 from synapse.util.caches.descriptors import cached, cachedList
 from synapse.util.caches.stream_change_cache import StreamChangeCache
 from synapse.util.cancellation import cancellable
@@ -611,6 +611,10 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
 
         self._stream_order_on_start = self.get_room_max_stream_ordering()
         self._min_stream_order_on_start = self.get_room_min_stream_ordering()
+
+        database.updates.register_background_update_handler(
+            "sliding_sync_room_metadata", self._sliding_sync_room_metadata_bg_update
+        )
 
     def get_room_max_stream_ordering(self) -> int:
         """Get the stream_ordering of regular events that we have committed up to
@@ -1188,22 +1192,23 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
         return None
 
     @cachedList(
-        cached_method_name="get_rough_stream_ordering_for_room", list_name="room_ids",
+        cached_method_name="get_rough_stream_ordering_for_room",
+        list_name="room_ids",
     )
     async def rough_get_last_pos(
         self, room_ids: StrSequence
-    ) -> Dict[str, Optional[int]]:
+    ) -> Mapping[str, Optional[int]]:
         def rough_get_last_pos_txn(
             txn: LoggingTransaction,
             batch: StrSequence,
-        ) -> Dict[str, int]:
+        ) -> Mapping[str, Optional[int]]:
             clause, args = make_in_list_sql_clause(
                 self.database_engine, "room_id", batch
             )
             sql = f"""
-                SELECT DISTINCT ON (room_id) room_id, stream_ordering FROM events
-                WHERE {clause} AND stream_ordering IS NOT NULL
-                ORDER BY room_id, stream_ordering DESC
+                SELECT room_id, last_stream_ordering
+                FROM sliding_sync_room_metadata
+                WHERE {clause}
             """
 
             txn.execute(sql, args)
@@ -1227,9 +1232,10 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
     ) -> Optional[int]:
         def get_rough_stream_ordering_for_room_txn(
             txn: LoggingTransaction,
-        ) -> Dict[str, int]:
-            sql = f"""
-                SELECT MAX(stream_ordering) FROM events
+        ) -> Optional[int]:
+            sql = """
+                SELECT last_stream_ordering
+                FROM sliding_sync_room_metadata
                 WHERE room_id = ?
             """
 
@@ -2042,3 +2048,50 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
             return RoomStreamToken(stream=last_position.stream - 1)
 
         return None
+
+    async def _sliding_sync_room_metadata_bg_update(
+        self, progress: JsonDict, batch_size: int
+    ) -> int:
+        """Background update to fill out 'sliding_sync_room_metadata' table"""
+        previous_room = progress.get("previous_room", "")
+
+        def _sliding_sync_room_metadata_bg_update_txn(txn: LoggingTransaction) -> int:
+            sql = """
+                SELECT room_id, MAX(stream_ordering) FROM rooms
+                INNER JOIN events USING (room_id)
+                WHERE room_id > ? AND stream_ordering IS NOT NULL
+                GROUP BY room_id
+                ORDER BY room_id ASC
+                LIMIT ?
+            """
+            txn.execute(sql, (previous_room, batch_size))
+            rows = txn.fetchall()
+            if not rows:
+                return 0
+
+            self.db_pool.simple_upsert_many_txn(
+                txn,
+                table="sliding_sync_room_metadata",
+                key_names=("room_id",),
+                key_values=[(room_id,) for room_id, _ in rows],
+                value_names=("last_stream_ordering",),
+                value_values=[(stream,) for _, stream in rows],
+            )
+
+            self.db_pool.updates._background_update_progress_txn(
+                txn, "sliding_sync_room_metadata", {"previous_room": rows[-1][0]}
+            )
+
+            return len(rows)
+
+        rows = await self.db_pool.runInteraction(
+            "_sliding_sync_room_metadata_bg_update",
+            _sliding_sync_room_metadata_bg_update_txn,
+        )
+
+        if rows == 0:
+            await self.db_pool.updates._end_background_update(
+                "sliding_sync_room_metadata"
+            )
+
+        return rows

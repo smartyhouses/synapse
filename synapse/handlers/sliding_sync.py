@@ -1343,8 +1343,8 @@ class SlidingSyncHandler:
                             and state_key == StateValues.ME
                         ):
                             required_state_types.append(
-                                    (EventTypes.Member, user.to_string())
-                                )
+                                (EventTypes.Member, user.to_string())
+                            )
                         else:
                             required_state_types.append((state_type, state_key))
 
@@ -1434,10 +1434,10 @@ class SlidingSyncHandler:
         # Figure out the last bump event in the room
         last_bump_event_stream_ordering = None
         if timeline_events:
-            for event in reversed(timeline_events):
-                if event.type in DEFAULT_BUMP_EVENT_TYPES:
+            for e in reversed(timeline_events):
+                if e.type in DEFAULT_BUMP_EVENT_TYPES:
                     last_bump_event_stream_ordering = (
-                        event.internal_metadata.stream_ordering
+                        e.internal_metadata.stream_ordering
                     )
                     break
 

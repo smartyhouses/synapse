@@ -1629,6 +1629,18 @@ class PersistEventsStore:
             ],
         )
 
+        self.db_pool.simple_upsert_many_txn(
+            txn,
+            table="sliding_sync_room_metadata",
+            key_names=("room_id",),
+            key_values=[(event.room_id,) for event, _ in events_and_contexts],
+            value_names=("last_stream_ordering",),
+            value_values=[
+                (event.internal_metadata.stream_ordering,)
+                for event, _ in events_and_contexts
+            ],
+        )
+
         # If we're persisting an unredacted event we go and ensure
         # that we mark any redactions that reference this event as
         # requiring censoring.
