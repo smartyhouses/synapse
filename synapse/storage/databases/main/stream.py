@@ -2057,12 +2057,15 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
 
         def _sliding_sync_room_metadata_bg_update_txn(txn: LoggingTransaction) -> int:
             sql = """
-                SELECT room_id, MAX(stream_ordering) FROM rooms
-                INNER JOIN events USING (room_id)
-                WHERE room_id > ? AND stream_ordering IS NOT NULL
+                SELECT room_id, MAX(stream_ordering) FROM events
+                WHERE stream_ordering IS NOT NULL
+                    AND room_id IN (
+                        SELECT room_id FROM rooms
+                        WHERE room_id > ?
+                        ORDER BY room_id ASC
+                        LIMIT ?
+                    )
                 GROUP BY room_id
-                ORDER BY room_id ASC
-                LIMIT ?
             """
             txn.execute(sql, (previous_room, batch_size))
             rows = txn.fetchall()
