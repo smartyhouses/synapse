@@ -445,10 +445,6 @@ class SlidingSyncHandler:
             for list_key, list_config in sync_config.lists.items():
                 # Apply filters
                 filtered_sync_room_map = sync_room_map
-                if list_config.filters is not None:
-                    filtered_sync_room_map = await self.filter_rooms(
-                        sync_config.user, sync_room_map, list_config.filters, to_token
-                    )
 
                 # Sort the list
                 sorted_room_info = await self.sort_rooms(
@@ -495,6 +491,14 @@ class SlidingSyncHandler:
                             # only has `["m.room.member", "$LAZY"]` for membership
                             # (lazy-loading room members).
                             if partial_state_room_map.get(room_id) and not lazy_loading:
+                                continue
+
+                            if list_config.filters and not await self.filter_rooms(
+                                sync_config.user,
+                                {room_id: room_membership},
+                                list_config.filters,
+                                to_token,
+                            ):
                                 continue
 
                             # Take the superset of the `RoomSyncConfig` for each room.
@@ -966,9 +970,7 @@ class SlidingSyncHandler:
         # Filter by room type (space vs room, etc). A room must match one of the types
         # provided in the list. `None` is a valid type for rooms which do not have a
         # room type.
-        if False and (
-            filters.room_types is not None or filters.not_room_types is not None
-        ):
+        if filters.room_types is not None or filters.not_room_types is not None:
             # Make a copy so we don't run into an error: `Set changed size during
             # iteration`, when we filter out and remove items
             for room_id in filtered_room_id_set.copy():
