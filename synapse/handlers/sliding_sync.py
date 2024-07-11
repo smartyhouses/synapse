@@ -448,6 +448,15 @@ class SlidingSyncHandler:
                 # Apply filters
                 filtered_sync_room_map = sync_room_map
 
+                if list_config.filters:
+
+                    filtered_sync_room_map = await self.filter_rooms(
+                        sync_config.user,
+                        filtered_sync_room_map,
+                        list_config.filters,
+                        to_token,
+                    )
+
                 # Sort the list
                 sorted_room_info = await self.sort_rooms(
                     filtered_sync_room_map, to_token
@@ -492,14 +501,6 @@ class SlidingSyncHandler:
                             # only has `["m.room.member", "$LAZY"]` for membership
                             # (lazy-loading room members).
                             if partial_state_room_map.get(room_id) and not lazy_loading:
-                                continue
-
-                            if list_config.filters and not await self.filter_rooms(
-                                sync_config.user,
-                                {room_id: room_membership},
-                                list_config.filters,
-                                to_token,
-                            ):
                                 continue
 
                             # Take the superset of the `RoomSyncConfig` for each room.
@@ -974,12 +975,10 @@ class SlidingSyncHandler:
         if filters.room_types is not None or filters.not_room_types is not None:
             # Make a copy so we don't run into an error: `Set changed size during
             # iteration`, when we filter out and remove items
+
+            room_types = await self.store.bulk_get_room_type(filtered_room_id_set)
             for room_id in filtered_room_id_set.copy():
-                try:
-                    create_event = await self.store.get_create_event_for_room(room_id)
-                    room_type = create_event.content.get(EventContentFields.ROOM_TYPE)
-                except:
-                    room_type = None
+                room_type = room_types.get(room_id)
 
                 if (
                     filters.room_types is not None

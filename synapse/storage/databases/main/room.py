@@ -228,6 +228,30 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
             return row
         return bool(row[0]), bool(row[1])
 
+    @cached(max_entries=10000)
+    async def get_room_type(self, room_id: str) -> Optional[str]:
+        # TODO: Upsert room_stats_state on room creation / initial join.
+        return await self.db_pool.simple_select_one_onecol(
+            table="room_stats_state",
+            keyvalues={"room_id": room_id},
+            retcol="room_type",
+            allow_none=True,
+            desc="get_room_type",
+        )
+
+    @cachedList(cached_method_name="get_room_type", list_name="room_ids")
+    async def bulk_get_room_type(
+        self, room_ids: StrCollection
+    ) -> Mapping[str, Optional[str]]:
+        rows = await self.db_pool.simple_select_many_batch(
+            table="room_stats_state",
+            column="room_id",
+            iterable=room_ids,
+            retcols=("room_id", "room_type"),
+            desc="bulk_get_room_type",
+        )
+        return dict(rows)
+
     async def get_room_with_stats(self, room_id: str) -> Optional[RoomStats]:
         """Retrieve room with statistics.
 
