@@ -405,6 +405,7 @@ class SlidingSyncHandler:
 
         return result
 
+    @trace
     async def current_sync_for_user(
         self,
         sync_config: SlidingSyncConfig,
@@ -866,6 +867,7 @@ class SlidingSyncHandler:
 
         return filtered_sync_room_id_set
 
+    @trace
     async def filter_rooms(
         self,
         user: UserID,
@@ -1004,6 +1006,7 @@ class SlidingSyncHandler:
         # Assemble a new sync room map but only with the `filtered_room_id_set`
         return {room_id: sync_room_map[room_id] for room_id in filtered_room_id_set}
 
+    @trace
     async def sort_rooms(
         self,
         sync_room_map: Dict[str, _RoomMembershipForUser],
