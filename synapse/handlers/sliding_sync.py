@@ -24,12 +24,7 @@ from typing import TYPE_CHECKING, Any, Dict, Final, List, Optional, Set, Tuple
 import attr
 from immutabledict import immutabledict
 
-from synapse.api.constants import (
-    AccountDataTypes,
-    Direction,
-    EventTypes,
-    Membership,
-)
+from synapse.api.constants import AccountDataTypes, Direction, EventTypes, Membership
 from synapse.events import EventBase
 from synapse.events.utils import strip_event
 from synapse.handlers.relations import BundledAggregations
@@ -1571,12 +1566,13 @@ class SlidingSyncHandler:
                 up_to_stream_id=since_stream_id,
             )
 
-            logger.debug(
-                "Deleted %d to-device messages up to %d for %s",
-                deleted,
-                since_stream_id,
-                user_id,
-            )
+            if deleted:
+                logger.debug(
+                    "Deleted %d to-device messages up to %d for %s",
+                    deleted,
+                    since_stream_id,
+                    user_id,
+                )
 
         messages, stream_id = await self.store.get_messages_for_device(
             user_id=user_id,
