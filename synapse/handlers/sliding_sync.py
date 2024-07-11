@@ -1422,18 +1422,29 @@ class SlidingSyncHandler:
                     break
 
         # Figure out the last bump event in the room
-        last_bump_event_result = (
-            await self.store.get_last_event_pos_in_room_before_stream_ordering(
-                room_id, to_token.room_key, event_types=DEFAULT_BUMP_EVENT_TYPES
+        last_bump_event_stream_ordering = None
+        if timeline_events:
+            for event in reversed(timeline_events):
+                if event.type in DEFAULT_BUMP_EVENT_TYPES:
+                    last_bump_event_stream_ordering = (
+                        event.internal_metadata.stream_ordering
+                    )
+                    break
+
+        if last_bump_event_stream_ordering is None:
+            last_bump_event_result = (
+                await self.store.get_last_event_pos_in_room_before_stream_ordering(
+                    room_id, to_token.room_key, event_types=DEFAULT_BUMP_EVENT_TYPES
+                )
             )
-        )
+            if last_bump_event_result is not None:
+                last_bump_event_stream_ordering = last_bump_event_result[1].stream
 
         # By default, just choose the membership event position
         bump_stamp = room_membership_for_user_at_to_token.event_pos.stream
         # But if we found a bump event, use that instead
-        if last_bump_event_result is not None:
-            _, bump_event_pos = last_bump_event_result
-            bump_stamp = bump_event_pos.stream
+        if last_bump_event_stream_ordering is not None:
+            bump_stamp = last_bump_event_stream_ordering
 
         return SlidingSyncResult.RoomResult(
             name=room_name,
