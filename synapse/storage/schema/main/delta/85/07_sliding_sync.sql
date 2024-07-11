@@ -12,7 +12,7 @@
 -- <https://www.gnu.org/licenses/agpl-3.0.html>.
 
 CREATE TABLE sliding_sync_room_metadata (
-    room_id BIGINT NOT NULL PRIMARY KEY,
+    room_id TEXT NOT NULL PRIMARY KEY,
     last_stream_ordering BIGINT
 );
 

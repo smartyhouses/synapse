@@ -1052,6 +1052,10 @@ class SlidingSyncHandler:
             if stream_pos is not None:
                 last_activity_in_room_map[room_id] = stream_pos
 
+        for room_id in sync_room_map.keys() - last_activity_in_room_map.keys():
+            # TODO: Handle better
+            last_activity_in_room_map[room_id] = sync_room_map[room_id].event_pos.stream
+
         return sorted(
             sync_room_map.values(),
             # Sort by the last activity (stream_ordering) in the room
