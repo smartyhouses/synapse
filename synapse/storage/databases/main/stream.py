@@ -88,7 +88,6 @@ from synapse.types import (
 from synapse.util.caches.descriptors import cached, cachedList
 from synapse.util.caches.stream_change_cache import StreamChangeCache
 from synapse.util.cancellation import cancellable
-from synapse.util.iterutils import batch_iter
 
 if TYPE_CHECKING:
     from synapse.server import HomeServer
@@ -2095,7 +2094,10 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
                 table="sliding_sync_room_metadata",
                 key_names=("room_id",),
                 key_values=[(room_id,) for room_id, _, _ in rows],
-                value_names=("last_stream_ordering",),
+                value_names=(
+                    "instance_name",
+                    "last_stream_ordering",
+                ),
                 value_values=[
                     (
                         instance_name or "master",

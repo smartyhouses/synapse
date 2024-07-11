@@ -27,7 +27,6 @@ from immutabledict import immutabledict
 from synapse.api.constants import (
     AccountDataTypes,
     Direction,
-    EventContentFields,
     EventTypes,
     Membership,
 )
