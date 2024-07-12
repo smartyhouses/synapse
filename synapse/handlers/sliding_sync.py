@@ -1440,7 +1440,10 @@ class SlidingSyncHandler:
         last_bump_event_stream_ordering = None
         if timeline_events:
             for e in reversed(timeline_events):
-                if e.type in DEFAULT_BUMP_EVENT_TYPES:
+                if (
+                    e.type in DEFAULT_BUMP_EVENT_TYPES
+                    and e.internal_metadata.stream_ordering > 0
+                ):
                     last_bump_event_stream_ordering = (
                         e.internal_metadata.stream_ordering
                     )
