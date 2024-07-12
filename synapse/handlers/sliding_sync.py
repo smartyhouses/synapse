@@ -1261,6 +1261,10 @@ class SlidingSyncHandler:
                 else None
             )
 
+            fiddled_timeline_limit = room_sync_config.timeline_limit
+            if to_bound:
+                fiddled_timeline_limit = max(fiddled_timeline_limit, 10)
+
             timeline_events, new_room_key = await self.store.paginate_room_events(
                 room_id=room_id,
                 from_key=from_bound,
@@ -1268,7 +1272,7 @@ class SlidingSyncHandler:
                 direction=Direction.BACKWARDS,
                 # We add one so we can determine if there are enough events to saturate
                 # the limit or not (see `limited`)
-                limit=room_sync_config.timeline_limit + 1,
+                limit=fiddled_timeline_limit + 1,
                 event_filter=None,
             )
 
@@ -1279,11 +1283,11 @@ class SlidingSyncHandler:
             # Determine our `limited` status based on the timeline. We do this before
             # filtering the events so we can accurately determine if there is more to
             # paginate even if we filter out some/all events.
-            if len(timeline_events) > room_sync_config.timeline_limit:
+            if len(timeline_events) > fiddled_timeline_limit:
                 limited = True
                 # Get rid of that extra "+ 1" event because we only used it to determine
                 # if we hit the limit or not
-                timeline_events = timeline_events[-room_sync_config.timeline_limit :]
+                timeline_events = timeline_events[-fiddled_timeline_limit:]
                 assert timeline_events[0].internal_metadata.stream_ordering
                 new_room_key = RoomStreamToken(
                     stream=timeline_events[0].internal_metadata.stream_ordering - 1
