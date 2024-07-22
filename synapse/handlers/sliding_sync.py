@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 # The event types that clients should consider as new activity.
 DEFAULT_BUMP_EVENT_TYPES = {
+    EventTypes.Create,
     EventTypes.Message,
     EventTypes.Encrypted,
     EventTypes.Sticker,
@@ -644,7 +645,7 @@ class SlidingSyncHandler:
             room_sync_result = await self.get_room_sync_data(
                 sync_config=sync_config,
                 room_id=room_id,
-                room_sync_config=room_sync_config,
+                room_sync_config=relevant_room_map[room_id],
                 room_membership_for_user_at_to_token=room_membership_for_user_map[
                     room_id
                 ],
@@ -1274,19 +1275,11 @@ class SlidingSyncHandler:
         # Assemble a map of room ID to the `stream_ordering` of the last activity that the
         # user should see in the room (<= `to_token`)
         last_activity_in_room_map: Dict[str, int] = {}
-        to_fetch = []
+
         for room_id, room_for_user in sync_room_map.items():
             # If they are fully-joined to the room, let's find the latest activity
             # at/before the `to_token`.
-            if room_for_user.membership == Membership.JOIN:
-                stream = self.store._events_stream_cache._entity_to_key.get(room_id)
-                if stream is not None:
-                    if stream <= to_token.room_key.stream:
-                        last_activity_in_room_map[room_id] = stream
-                        continue
-
-                to_fetch.append(room_id)
-            else:
+            if room_for_user.membership != Membership.JOIN:
                 # Otherwise, if the user has left/been invited/knocked/been banned from
                 # a room, they shouldn't see anything past that point.
                 #
@@ -1296,19 +1289,18 @@ class SlidingSyncHandler:
                 # https://github.com/matrix-org/matrix-spec-proposals/pull/3575#discussion_r1653045932
                 last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
 
-        ordering_map = await self.store.get_max_stream_ordering_in_rooms(to_fetch)
-        for room_id, stream_pos in ordering_map.items():
-            if stream_pos is None:
-                continue
+        joined_room_positions = (
+            await self.store.bulk_get_last_event_pos_in_room_before_stream_ordering(
+                [
+                    room_id
+                    for room_id, room_for_user in sync_room_map.items()
+                    if room_for_user.membership == Membership.JOIN
+                ],
+                to_token.room_key,
+            )
+        )
 
-            if stream_pos.persisted_after(to_token.room_key):
-                continue
-
-            last_activity_in_room_map[room_id] = stream_pos.stream
-
-        for room_id in sync_room_map.keys() - last_activity_in_room_map.keys():
-            # TODO: Handle better
-            last_activity_in_room_map[room_id] = sync_room_map[room_id].event_pos.stream
+        last_activity_in_room_map.update(joined_room_positions)
 
         return sorted(
             sync_room_map.values(),
