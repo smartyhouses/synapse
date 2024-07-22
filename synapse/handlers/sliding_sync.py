@@ -1507,8 +1507,8 @@ class SlidingSyncHandler:
                 )
 
             fiddled_timeline_limit = room_sync_config.timeline_limit
-            if to_bound:
-                fiddled_timeline_limit = max(fiddled_timeline_limit, 10)
+            # if to_bound:
+            #     fiddled_timeline_limit = max(fiddled_timeline_limit, 10)
 
             timeline_events, new_room_key = await self.store.paginate_room_events(
                 room_id=room_id,
