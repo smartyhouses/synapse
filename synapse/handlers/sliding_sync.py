@@ -20,7 +20,18 @@
 import logging
 from enum import Enum
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Dict, Final, List, Mapping, Optional, Set, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Final,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 import attr
 from immutabledict import immutabledict
@@ -35,6 +46,7 @@ from synapse.storage.databases.main.roommember import extract_heroes_from_room_s
 from synapse.storage.databases.main.stream import CurrentStateDeltaMembership
 from synapse.storage.roommember import MemberSummary
 from synapse.types import (
+    DeviceListUpdates,
     JsonDict,
     PersistedEventPosition,
     Requester,
@@ -333,7 +345,8 @@ class StateValues:
     # `sender` in the timeline). We only give special meaning to this value when it's a
     # `state_key`.
     LAZY: Final = "$LAZY"
-
+    # Subsitute with the requester's user ID. Typically used by clients to get
+    # the user's membership.
     ME: Final = "$ME"
 
 
@@ -346,6 +359,7 @@ class SlidingSyncHandler:
         self.notifier = hs.get_notifier()
         self.event_sources = hs.get_event_sources()
         self.relations_handler = hs.get_relations_handler()
+        self.device_handler = hs.get_device_handler()
         self.rooms_to_exclude_globally = hs.config.server.rooms_to_exclude_from_sync
 
         self.connection_store = SlidingSyncConnectionStore()
@@ -375,10 +389,6 @@ class SlidingSyncHandler:
         # not been exceeded (if not part of the group by this point, almost certain
         # auth_blocking will occur)
         await self.auth_blocking.check_auth_blocking(requester=requester)
-
-        # TODO: If the To-Device extension is enabled and we have a `from_token`, delete
-        # any to-device messages before that token (since we now know that the device
-        # has received them). (see sync v2 for how to do this)
 
         # If we're working with a user-provided token, we need to make sure to wait for
         # this worker to catch up with the token so we don't skip past any incoming
@@ -459,8 +469,7 @@ class SlidingSyncHandler:
             raise NotImplementedError()
 
         await self.connection_store.mark_token_seen(
-            user_id,
-            conn_id=sync_config.connection_id(),
+            sync_config=sync_config,
             from_token=from_token,
         )
 
@@ -617,9 +626,8 @@ class SlidingSyncHandler:
             rooms_should_send = set()
             for room_id in relevant_room_map:
                 status = await self.connection_store.have_sent_room(
-                    user_id,
-                    sync_config.connection_id(),
-                    from_token.connection_token,
+                    sync_config,
+                    from_token.connection_position,
                     room_id,
                 )
                 if status.status != HaveSentRoomFlag.LIVE:
@@ -659,20 +667,23 @@ class SlidingSyncHandler:
             await concurrently_execute(handle_room, relevant_room_map, 10)
 
         extensions = await self.get_extensions_response(
-            sync_config=sync_config, to_token=to_token
+            sync_config=sync_config,
+            from_token=from_token,
+            to_token=to_token,
         )
 
         if has_lists or has_room_subscriptions:
             connection_token = await self.connection_store.record_rooms(
-                user_id,
-                conn_id=sync_config.connection_id(),
+                sync_config=sync_config,
                 from_token=from_token,
                 sent_room_ids=relevant_room_map.keys(),
-                unsent_room_ids=[],  # TODO: We currently ssume that we have sent down all updates.
+                # TODO: We need to calculate which rooms have had updates since the `from_token` but were not included in the `sent_room_ids`
+                unsent_room_ids=[],
             )
         elif from_token:
-            connection_token = from_token.connection_token
+            connection_token = from_token.connection_position
         else:
+            # Initial sync without a `from_token` starts at `0`
             connection_token = 0
 
         return SlidingSyncResult(
@@ -1277,18 +1288,18 @@ class SlidingSyncHandler:
         last_activity_in_room_map: Dict[str, int] = {}
 
         for room_id, room_for_user in sync_room_map.items():
-            # If they are fully-joined to the room, let's find the latest activity
-            # at/before the `to_token`.
             if room_for_user.membership != Membership.JOIN:
-                # Otherwise, if the user has left/been invited/knocked/been banned from
-                # a room, they shouldn't see anything past that point.
+                # If the user has left/been invited/knocked/been banned from a
+                # room, they shouldn't see anything past that point.
                 #
-                # FIXME: It's possible that people should see beyond this point in
-                # invited/knocked cases if for example the room has
+                # FIXME: It's possible that people should see beyond this point
+                # in invited/knocked cases if for example the room has
                 # `invite`/`world_readable` history visibility, see
                 # https://github.com/matrix-org/matrix-spec-proposals/pull/3575#discussion_r1653045932
                 last_activity_in_room_map[room_id] = room_for_user.event_pos.stream
 
+        # For fully-joined rooms, we find the latest activity at/before the
+        # `to_token`.
         joined_room_positions = (
             await self.store.bulk_get_last_event_pos_in_room_before_stream_ordering(
                 [
@@ -1441,24 +1452,23 @@ class SlidingSyncHandler:
         #  - When users `newly_joined`
         #  - For an incremental sync where we haven't sent it down this
         #    connection before
-        to_bound = None
+        from_bound = None
         initial = True
         if from_token and not room_membership_for_user_at_to_token.newly_joined:
             room_status = await self.connection_store.have_sent_room(
-                user_id=user.to_string(),
-                conn_id=sync_config.connection_id(),
-                connection_token=from_token.connection_token,
+                sync_config=sync_config,
+                connection_token=from_token.connection_position,
                 room_id=room_id,
             )
             if room_status.status == HaveSentRoomFlag.LIVE:
-                to_bound = from_token.stream_token.room_key
+                from_bound = from_token.stream_token.room_key
                 initial = False
             elif room_status.status == HaveSentRoomFlag.PREVIOUSLY:
                 assert room_status.last_token is not None
-                to_bound = room_status.last_token
+                from_bound = room_status.last_token
                 initial = False
             elif room_status.status == HaveSentRoomFlag.NEVER:
-                to_bound = None
+                from_bound = None
                 initial = True
             else:
                 assert_never(room_status.status)
@@ -1488,13 +1498,13 @@ class SlidingSyncHandler:
             prev_batch_token = to_token
 
             # We're going to paginate backwards from the `to_token`
-            from_bound = to_token.room_key
+            to_bound = to_token.room_key
             # People shouldn't see past their leave/ban event
             if room_membership_for_user_at_to_token.membership in (
                 Membership.LEAVE,
                 Membership.BAN,
             ):
-                from_bound = (
+                to_bound = (
                     room_membership_for_user_at_to_token.event_pos.to_room_stream_token()
                 )
 
@@ -1504,8 +1514,11 @@ class SlidingSyncHandler:
 
             timeline_events, new_room_key = await self.store.paginate_room_events(
                 room_id=room_id,
-                from_key=from_bound,
-                to_key=to_bound,
+                # The bounds are reversed so we can paginate backwards
+                # (from newer to older events) starting at to_bound.
+                # This ensures we fill the `limit` with the newest events first,
+                from_key=to_bound,
+                to_key=from_bound,
                 direction=Direction.BACKWARDS,
                 # We add one so we can determine if there are enough events to saturate
                 # the limit or not (see `limited`)
@@ -1735,13 +1748,8 @@ class SlidingSyncHandler:
 
                             # FIXME: We probably also care about invite, ban, kick, targets, etc
                             # but the spec only mentions "senders".
-                        elif (
-                            state_type == EventTypes.Member
-                            and state_key == StateValues.ME
-                        ):
-                            required_state_types.append(
-                                (EventTypes.Member, user.to_string())
-                            )
+                        elif state_key == StateValues.ME:
+                            required_state_types.append((state_type, user.to_string()))
                         else:
                             required_state_types.append((state_type, state_key))
 
@@ -1772,10 +1780,12 @@ class SlidingSyncHandler:
                 to_token=to_token,
             )
         else:
-            assert to_bound is not None
+            assert from_bound is not None
 
             deltas = await self.store.get_current_state_deltas_for_room(
-                room_id, to_bound, to_token.room_key
+                room_id=room_id,
+                from_token=from_bound,
+                to_token=to_token.room_key,
             )
             # TODO: Filter room state before fetching events
             # TODO: Handle state resets where event_id is None
@@ -1874,33 +1884,47 @@ class SlidingSyncHandler:
         self,
         sync_config: SlidingSyncConfig,
         to_token: StreamToken,
+        from_token: Optional[SlidingSyncStreamToken],
     ) -> SlidingSyncResult.Extensions:
         """Handle extension requests.
 
         Args:
             sync_config: Sync configuration
             to_token: The point in the stream to sync up to.
+            from_token: The point in the stream to sync from.
         """
 
         if sync_config.extensions is None:
             return SlidingSyncResult.Extensions()
 
         to_device_response = None
-        if sync_config.extensions.to_device:
-            to_device_response = await self.get_to_device_extensions_response(
+        if sync_config.extensions.to_device is not None:
+            to_device_response = await self.get_to_device_extension_response(
                 sync_config=sync_config,
                 to_device_request=sync_config.extensions.to_device,
                 to_token=to_token,
             )
 
-        return SlidingSyncResult.Extensions(to_device=to_device_response)
+        e2ee_response = None
+        if sync_config.extensions.e2ee is not None:
+            e2ee_response = await self.get_e2ee_extension_response(
+                sync_config=sync_config,
+                e2ee_request=sync_config.extensions.e2ee,
+                to_token=to_token,
+                from_token=from_token,
+            )
 
-    async def get_to_device_extensions_response(
+        return SlidingSyncResult.Extensions(
+            to_device=to_device_response,
+            e2ee=e2ee_response,
+        )
+
+    async def get_to_device_extension_response(
         self,
         sync_config: SlidingSyncConfig,
         to_device_request: SlidingSyncConfig.Extensions.ToDeviceExtension,
         to_token: StreamToken,
-    ) -> SlidingSyncResult.Extensions.ToDeviceExtension:
+    ) -> Optional[SlidingSyncResult.Extensions.ToDeviceExtension]:
         """Handle to-device extension (MSC3885)
 
         Args:
@@ -1908,14 +1932,16 @@ class SlidingSyncHandler:
             to_device_request: The to-device extension from the request
             to_token: The point in the stream to sync up to.
         """
-
         user_id = sync_config.user.to_string()
         device_id = sync_config.requester.device_id
 
+        # Skip if the extension is not enabled
+        if not to_device_request.enabled:
+            return None
+
         # Check that this request has a valid device ID (not all requests have
-        # to belong to a device, and so device_id is None), and that the
-        # extension is enabled.
-        if device_id is None or not to_device_request.enabled:
+        # to belong to a device, and so device_id is None)
+        if device_id is None:
             return SlidingSyncResult.Extensions.ToDeviceExtension(
                 next_batch=f"{to_token.to_device_key}",
                 events=[],
@@ -1966,6 +1992,56 @@ class SlidingSyncHandler:
         return SlidingSyncResult.Extensions.ToDeviceExtension(
             next_batch=f"{stream_id}",
             events=messages,
+        )
+
+    async def get_e2ee_extension_response(
+        self,
+        sync_config: SlidingSyncConfig,
+        e2ee_request: SlidingSyncConfig.Extensions.E2eeExtension,
+        to_token: StreamToken,
+        from_token: Optional[SlidingSyncStreamToken],
+    ) -> Optional[SlidingSyncResult.Extensions.E2eeExtension]:
+        """Handle E2EE device extension (MSC3884)
+
+        Args:
+            sync_config: Sync configuration
+            e2ee_request: The e2ee extension from the request
+            to_token: The point in the stream to sync up to.
+            from_token: The point in the stream to sync from.
+        """
+        user_id = sync_config.user.to_string()
+        device_id = sync_config.requester.device_id
+
+        # Skip if the extension is not enabled
+        if not e2ee_request.enabled:
+            return None
+
+        device_list_updates: Optional[DeviceListUpdates] = None
+        if from_token is not None:
+            # TODO: This should take into account the `from_token` and `to_token`
+            device_list_updates = await self.device_handler.get_user_ids_changed(
+                user_id=user_id,
+                from_token=from_token.stream_token,
+            )
+
+        device_one_time_keys_count: Mapping[str, int] = {}
+        device_unused_fallback_key_types: Sequence[str] = []
+        if device_id:
+            # TODO: We should have a way to let clients differentiate between the states of:
+            #   * no change in OTK count since the provided since token
+            #   * the server has zero OTKs left for this device
+            #  Spec issue: https://github.com/matrix-org/matrix-doc/issues/3298
+            device_one_time_keys_count = await self.store.count_e2e_one_time_keys(
+                user_id, device_id
+            )
+            device_unused_fallback_key_types = (
+                await self.store.get_e2e_unused_fallback_key_types(user_id, device_id)
+            )
+
+        return SlidingSyncResult.Extensions.E2eeExtension(
+            device_list_updates=device_list_updates,
+            device_one_time_keys_count=device_one_time_keys_count,
+            device_unused_fallback_key_types=device_unused_fallback_key_types,
         )
 
 
@@ -2047,13 +2123,14 @@ class SlidingSyncConnectionStore:
     )
 
     async def have_sent_room(
-        self, user_id: str, conn_id: str, connection_token: int, room_id: str
+        self, sync_config: SlidingSyncConfig, connection_token: int, room_id: str
     ) -> HaveSentRoom:
-        """Whether for the given user_id/conn_id/token, return whether we have
+        """For the given user_id/conn_id/token, return whether we have
         previously sent the room down
         """
 
-        sync_statuses = self._connections.setdefault((user_id, conn_id), {})
+        conn_key = self._get_connection_key(sync_config)
+        sync_statuses = self._connections.setdefault(conn_key, {})
         room_status = sync_statuses.get(connection_token, {}).get(
             room_id, HAVE_SENT_ROOM_NEVER
         )
@@ -2062,8 +2139,7 @@ class SlidingSyncConnectionStore:
 
     async def record_rooms(
         self,
-        user_id: str,
-        conn_id: str,
+        sync_config: SlidingSyncConfig,
         from_token: Optional[SlidingSyncStreamToken],
         *,
         sent_room_ids: StrCollection,
@@ -2072,25 +2148,25 @@ class SlidingSyncConnectionStore:
         """Record which rooms we have/haven't sent down in a new response
 
         Attributes:
-            user_id
-            conn_id
+            sync_config
             from_token: The since token from the request, if any
             sent_room_ids: The set of room IDs that we have sent down as
                 part of this request (only needs to be ones we didn't
                 previously sent down).
             unsent_room_ids: The set of room IDs that have had updates
-                since the `last_room_token`, but which were not included in
+                since the `from_token`, but which were not included in
                 this request
         """
         prev_connection_token = 0
         if from_token is not None:
-            prev_connection_token = from_token.connection_token
+            prev_connection_token = from_token.connection_position
 
         # If there are no changes then this is a noop.
         if not sent_room_ids and not unsent_room_ids:
             return prev_connection_token
 
-        sync_statuses = self._connections.setdefault((user_id, conn_id), {})
+        conn_key = self._get_connection_key(sync_config)
+        sync_statuses = self._connections.setdefault(conn_key, {})
 
         # Generate a new token, removing any existing entries in that token
         # (which can happen if requests get resent).
@@ -2138,8 +2214,7 @@ class SlidingSyncConnectionStore:
 
     async def mark_token_seen(
         self,
-        user_id: str,
-        conn_id: str,
+        sync_config: SlidingSyncConfig,
         from_token: Optional[SlidingSyncStreamToken],
     ) -> None:
         """We have received a request with the given token, so we can clear out
@@ -2151,14 +2226,49 @@ class SlidingSyncConnectionStore:
         # Clear out any tokens for the connection that doesn't match the one
         # from the request.
 
-        sync_statuses = self._connections.pop((user_id, conn_id), {})
+        conn_key = self._get_connection_key(sync_config)
+        sync_statuses = self._connections.pop(conn_key, {})
         if from_token is None:
             return
 
         sync_statuses = {
-            i: room_statuses
-            for i, room_statuses in sync_statuses.items()
-            if i == from_token.connection_token
+            connection_token: room_statuses
+            for connection_token, room_statuses in sync_statuses.items()
+            if connection_token == from_token.connection_position
         }
         if sync_statuses:
-            self._connections[(user_id, conn_id)] = sync_statuses
+            self._connections[conn_key] = sync_statuses
+
+    @staticmethod
+    def _get_connection_key(sync_config: SlidingSyncConfig) -> Tuple[str, str]:
+        """Return a unique identifier for this connection.
+
+        The first part is simply the user ID.
+
+        The second part is generally a combination of device ID and conn_id.
+        However, both these two are optional (e.g. puppet access tokens don't
+        have device IDs), so this handles those edge cases.
+
+        We use this over the raw `conn_id` to avoid clashes between different
+        clients that use the same `conn_id`. Imagine a user uses a web client
+        that uses `conn_id: main_sync_loop` and an Android client that also has
+        a `conn_id: main_sync_loop`.
+        """
+
+        user_id = sync_config.user.to_string()
+
+        # If this is missing, only one sliding sync connection is allowed per
+        # given conn_id.
+        conn_id = sync_config.conn_id or ""
+
+        if sync_config.requester.device_id:
+            return (user_id, f"D/{sync_config.requester.device_id}/{conn_id}")
+
+        if sync_config.requester.access_token_id:
+            # If we don't have a device, then the access token ID should be a
+            # stable ID.
+            return (user_id, f"A/{sync_config.requester.access_token_id}/{conn_id}")
+
+        # If we have neither then its likely an AS or some weird token. Either
+        # way we can just fail here.
+        raise Exception("Cannot use sliding sync with access token type")

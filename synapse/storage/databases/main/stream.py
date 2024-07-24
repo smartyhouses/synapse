@@ -1355,32 +1355,46 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
         room_ids: StrCollection,
         end_token: RoomStreamToken,
     ) -> Dict[str, int]:
-        """Bulk fetch the latest event position in the given rooms"""
+        """Bulk fetch the stream position of the latest events in the given
+        rooms
+        """
 
         min_token = end_token.stream
         max_token = end_token.get_max_stream_pos()
         results: Dict[str, int] = {}
 
+        # First, we check for the rooms in the stream change cache to see if we
+        # can just use the latest position from it.
         missing_room_ids: Set[str] = set()
         for room_id in room_ids:
-            stream_pos = self._events_stream_cache._entity_to_key.get(room_id)
-            if stream_pos and stream_pos < max_token:
+            stream_pos = self._events_stream_cache.get_max_pos_of_last_change(room_id)
+            if stream_pos and stream_pos <= min_token:
                 results[room_id] = stream_pos
             else:
                 missing_room_ids.add(room_id)
 
+        # Next, we query the stream position from the DB. At first we fetch all
+        # positions less than the *max* stream pos in the token, then filter
+        # them down. We do this as a) this is a cheaper query, and b) the vast
+        # majority of rooms will have a latest token from before the min stream
+        # pos.
+
         def bulk_get_last_event_pos_txn(
             txn: LoggingTransaction, batch_room_ids: StrCollection
         ) -> Dict[str, int]:
+            # This query fetches the latest stream position in the rooms before
+            # the given max position.
             clause, args = make_in_list_sql_clause(
                 self.database_engine, "room_id", batch_room_ids
             )
             sql = f"""
                 SELECT room_id, (
                     SELECT stream_ordering FROM events AS e
+                    LEFT JOIN rejections USING (event_id)
                     WHERE e.room_id = r.room_id
                         AND stream_ordering <= ?
                         AND NOT outlier
+                        AND rejection_reason IS NULL
                     ORDER BY stream_ordering DESC
                     LIMIT 1
                 )
@@ -1398,14 +1412,24 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
                 batched,
             )
 
+            # Check that the stream position for the rooms are from before the
+            # minimum position of the token. If not then we need to fetch more
+            # rows.
             for room_id, stream in result.items():
-                if min_token < stream:
-                    recheck_rooms.add(room_id)
-                else:
+                if stream <= min_token:
                     results[room_id] = stream
+                else:
+                    recheck_rooms.add(room_id)
 
         if not recheck_rooms:
             return results
+
+        # For the remaining rooms we need to fetch all rows between the min and
+        # max stream positions in the end token, and filter out the rows that
+        # are after the end token.
+        #
+        # This query should be fast as the range between the min and max should
+        # be small.
 
         def bulk_get_last_event_pos_recheck_txn(
             txn: LoggingTransaction, batch_room_ids: StrCollection
@@ -1415,19 +1439,26 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
             )
             sql = f"""
                 SELECT room_id, instance_name, stream_ordering
+                FROM events
                 WHERE ? < stream_ordering AND stream_ordering <= ?
+                    AND NOT outlier
+                    AND rejection_reason IS NULL
                     AND {clause}
                 ORDER BY stream_ordering ASC
             """
             txn.execute(sql, [min_token, max_token] + args)
-            results: Dict[str, int] = {}
+
+            # We take the max stream ordering that is less than the token. Since
+            # we ordered by stream ordering we just need to iterate through and
+            # take the last matching stream ordering.
+            txn_results: Dict[str, int] = {}
             for row in txn:
                 room_id = row[0]
                 event_pos = PersistedEventPosition(row[1], row[2])
                 if not event_pos.persisted_after(end_token):
-                    results[room_id] = event_pos.stream
+                    txn_results[room_id] = event_pos.stream
 
-            return results
+            return txn_results
 
         for batched in batch_iter(recheck_rooms, 1000):
             recheck_result = await self.db_pool.runInteraction(
