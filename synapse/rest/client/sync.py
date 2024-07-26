@@ -49,6 +49,7 @@ from synapse.http.servlet import (
     parse_and_validate_json_object_from_request,
     parse_boolean,
     parse_integer,
+    parse_json_value_from_request,
     parse_string,
 )
 from synapse.http.site import SynapseRequest
@@ -898,6 +899,7 @@ class SlidingSyncRestServlet(RestServlet):
         # in.
         body = parse_and_validate_json_object_from_request(request, SlidingSyncBody)
         logger.info("Sliding sync request: %r", body)
+        logger.info("Sliding sync json: %r", parse_json_value_from_request(request))
         log_kv({"request_body": body})
 
         if body.lists:
