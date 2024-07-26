@@ -732,12 +732,13 @@ class SlidingSyncHandler:
 
         # First grab a current snapshot rooms for the user
         # (also handles forgotten rooms)
-        room_for_user_list = (
-            await self.store.get_rooms_for_local_user_where_membership_is(
-                user_id=user_id,
-                membership_list=Membership.LIST,
-                excluded_rooms=self.rooms_to_exclude_globally,
-            )
+        room_for_user_list = await self.store.get_rooms_for_local_user_where_membership_is(
+            user_id=user_id,
+            # We want to fetch any kind of membership (joined and left rooms) in order
+            # to get the `event_pos` of the latest room membership event for the
+            # user.
+            membership_list=Membership.LIST,
+            excluded_rooms=self.rooms_to_exclude_globally,
         )
 
         # If the user has never joined any rooms before, we can just return an empty list
