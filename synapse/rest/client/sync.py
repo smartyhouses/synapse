@@ -49,8 +49,10 @@ from synapse.http.servlet import (
     parse_and_validate_json_object_from_request,
     parse_boolean,
     parse_integer,
+    parse_json_object_from_request,
     parse_json_value_from_request,
     parse_string,
+    validate_json_object,
 )
 from synapse.http.site import SynapseRequest
 from synapse.logging.opentracing import log_kv, set_tag, trace_with_opname
@@ -897,9 +899,10 @@ class SlidingSyncRestServlet(RestServlet):
         # maybe some filters like sync v2  where they are built up once and referenced
         # by filter ID. For now, we will just prototype with always passing everything
         # in.
-        body = parse_and_validate_json_object_from_request(request, SlidingSyncBody)
+        content = parse_json_object_from_request(request, allow_empty_body=False)
+        body = validate_json_object(content, SlidingSyncBody)
         logger.info("Sliding sync request: %r", body)
-        logger.info("Sliding sync json: %r", parse_json_value_from_request(request))
+        logger.info("Sliding sync json: %r", content)
         log_kv({"request_body": body})
 
         if body.lists:
