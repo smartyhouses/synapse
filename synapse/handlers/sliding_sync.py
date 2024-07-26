@@ -1841,6 +1841,7 @@ class SlidingSyncHandler:
         bump_stamp = None
         if timeline_events:
             for e in reversed(timeline_events):
+                assert e.internal_metadata.stream_ordering is not None
                 if (
                     e.type in DEFAULT_BUMP_EVENT_TYPES
                     and e.internal_metadata.stream_ordering > 0
