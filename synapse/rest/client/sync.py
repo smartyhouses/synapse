@@ -932,6 +932,7 @@ class SlidingSyncRestServlet(RestServlet):
             logger.info("Client has disconnected; not serializing response.")
             return 200, {}
 
+        logger.info("Sliding sync response: %r", sliding_sync_results)
         response_content = await self.encode_response(requester, sliding_sync_results)
 
         return 200, response_content
