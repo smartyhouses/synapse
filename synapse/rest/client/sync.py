@@ -46,11 +46,9 @@ from synapse.handlers.sync import (
 from synapse.http.server import HttpServer
 from synapse.http.servlet import (
     RestServlet,
-    parse_and_validate_json_object_from_request,
     parse_boolean,
     parse_integer,
     parse_json_object_from_request,
-    parse_json_value_from_request,
     parse_string,
     validate_json_object,
 )
