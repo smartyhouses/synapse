@@ -41,7 +41,7 @@ from synapse.api.constants import AccountDataTypes, Direction, EventTypes, Membe
 from synapse.events import EventBase
 from synapse.events.utils import strip_event
 from synapse.handlers.relations import BundledAggregations
-from synapse.logging.opentracing import start_active_span, tag_args, trace
+from synapse.logging.opentracing import set_tag, start_active_span, tag_args, trace
 from synapse.storage.databases.main.roommember import extract_heroes_from_room_summary
 from synapse.storage.databases.main.stream import CurrentStateDeltaMembership
 from synapse.storage.roommember import MemberSummary
@@ -1481,6 +1481,12 @@ class SlidingSyncHandler:
                 initial = True
             else:
                 assert_never(room_status.status)
+
+            set_tag("sliding_sync.from_bound", from_bound)
+            set_tag("sliding_sync.room_status", room_status.status)
+
+        set_tag("sliding_sync.initial", initial)
+        set_tag("room_id", room_id)
 
         # Assemble the list of timeline events
         #
