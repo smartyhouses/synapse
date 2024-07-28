@@ -629,9 +629,6 @@ class SlidingSyncHandler:
         # previously.
         if from_token:
             rooms_should_send = set()
-            if sync_config.room_subscriptions:
-                rooms_should_send.update(sync_config.room_subscriptions.keys())
-
             for room_id in relevant_room_map:
                 status = await self.connection_store.have_sent_room(
                     sync_config,
@@ -1466,11 +1463,7 @@ class SlidingSyncHandler:
         #    connection before
         from_bound = None
         initial = True
-        if (
-            from_token
-            and not room_membership_for_user_at_to_token.newly_joined
-            and room_id not in sync_config.room_subscriptions
-        ):
+        if from_token and not room_membership_for_user_at_to_token.newly_joined:
             room_status = await self.connection_store.have_sent_room(
                 sync_config=sync_config,
                 connection_token=from_token.connection_position,
