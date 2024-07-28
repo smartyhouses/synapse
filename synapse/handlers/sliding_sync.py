@@ -1463,7 +1463,11 @@ class SlidingSyncHandler:
         #    connection before
         from_bound = None
         initial = True
-        if from_token and not room_membership_for_user_at_to_token.newly_joined:
+        if (
+            from_token
+            and not room_membership_for_user_at_to_token.newly_joined
+            and room_id not in sync_config.room_subscriptions
+        ):
             room_status = await self.connection_store.have_sent_room(
                 sync_config=sync_config,
                 connection_token=from_token.connection_position,
