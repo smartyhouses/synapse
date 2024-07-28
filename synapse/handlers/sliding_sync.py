@@ -684,6 +684,7 @@ class SlidingSyncHandler:
             connection_token = await self.connection_store.record_rooms(
                 sync_config=sync_config,
                 from_token=from_token,
+                relevant_room_map=relevant_room_map,
                 sent_room_ids=relevant_room_map.keys(),
                 # TODO: We need to calculate which rooms have had updates since the `from_token` but were not included in the `sent_room_ids`
                 unsent_room_ids=[],
@@ -1469,7 +1470,13 @@ class SlidingSyncHandler:
                 connection_token=from_token.connection_position,
                 room_id=room_id,
             )
-            if room_status.status == HaveSentRoomFlag.LIVE:
+            if (
+                room_status.timeline_limit is not None
+                and room_status.timeline_limit < room_sync_config.timeline_limit
+            ):
+                from_bound = None
+                initial = True
+            elif room_status.status == HaveSentRoomFlag.LIVE:
                 from_bound = from_token.stream_token.room_key
                 initial = False
             elif room_status.status == HaveSentRoomFlag.PREVIOUSLY:
@@ -2238,6 +2245,7 @@ class HaveSentRoom:
 
     status: HaveSentRoomFlag
     last_token: Optional[RoomStreamToken]
+    timeline_limit: Optional[int]
 
     @staticmethod
     def previously(last_token: RoomStreamToken) -> "HaveSentRoom":
@@ -2245,8 +2253,8 @@ class HaveSentRoom:
         return HaveSentRoom(HaveSentRoomFlag.PREVIOUSLY, last_token)
 
 
-HAVE_SENT_ROOM_NEVER = HaveSentRoom(HaveSentRoomFlag.NEVER, None)
-HAVE_SENT_ROOM_LIVE = HaveSentRoom(HaveSentRoomFlag.LIVE, None)
+HAVE_SENT_ROOM_NEVER = HaveSentRoom(HaveSentRoomFlag.NEVER, None, None)
+HAVE_SENT_ROOM_LIVE = HaveSentRoom(HaveSentRoomFlag.LIVE, None, None)
 
 
 @attr.s(auto_attribs=True)
@@ -2300,6 +2308,7 @@ class SlidingSyncConnectionStore:
         sync_config: SlidingSyncConfig,
         from_token: Optional[SlidingSyncStreamToken],
         *,
+        relevant_room_map: Dict[str, RoomSyncConfig],
         sent_room_ids: StrCollection,
         unsent_room_ids: StrCollection,
     ) -> int:
@@ -2338,7 +2347,9 @@ class SlidingSyncConnectionStore:
         # end we can treat this as a noop.
         have_updated = False
         for room_id in sent_room_ids:
-            new_room_statuses[room_id] = HAVE_SENT_ROOM_LIVE
+            new_room_statuses[room_id] = HaveSentRoom(
+                HaveSentRoomFlag.LIVE, None, relevant_room_map[room_id].timeline_limit
+            )
             have_updated = True
 
         # Whether we add/update the entries for unsent rooms depends on the
@@ -2352,16 +2363,20 @@ class SlidingSyncConnectionStore:
         #     sent anything down this time either so we leave it as NEVER.
 
         # Work out the new state for unsent rooms that were `LIVE`.
-        if from_token:
-            new_unsent_state = HaveSentRoom.previously(from_token.stream_token.room_key)
-        else:
-            new_unsent_state = HAVE_SENT_ROOM_NEVER
 
         for room_id in unsent_room_ids:
             prev_state = new_room_statuses.get(room_id)
             if prev_state is not None and prev_state.status == HaveSentRoomFlag.LIVE:
-                new_room_statuses[room_id] = new_unsent_state
                 have_updated = True
+
+                if from_token:
+                    new_room_statuses[room_id] = HaveSentRoom.previously(
+                        from_token.stream_token.room_key,
+                        None,
+                        relevant_room_map[room_id].timeline_limit,
+                    )
+                else:
+                    new_room_statuses[room_id] = HAVE_SENT_ROOM_NEVER
 
         if not have_updated:
             return prev_connection_token
