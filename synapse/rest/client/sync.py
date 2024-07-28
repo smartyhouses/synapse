@@ -900,7 +900,7 @@ class SlidingSyncRestServlet(RestServlet):
         content = parse_json_object_from_request(request, allow_empty_body=False)
         body = validate_json_object(content, SlidingSyncBody)
         logger.info("Sliding sync request: %r", body)
-        logger.info("Sliding sync json: %r", content)
+        # logger.info("Sliding sync json: %r", content)
         log_kv({"request_body": body})
 
         if body.lists:
@@ -932,7 +932,7 @@ class SlidingSyncRestServlet(RestServlet):
             logger.info("Client has disconnected; not serializing response.")
             return 200, {}
 
-        logger.info("Sliding sync response: %r", sliding_sync_results)
+        # logger.info("Sliding sync response: %r", sliding_sync_results)
         response_content = await self.encode_response(requester, sliding_sync_results)
 
         return 200, response_content

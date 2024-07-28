@@ -628,7 +628,7 @@ class SlidingSyncHandler:
         # Filter out rooms that haven't received updates and we've sent down
         # previously.
         if from_token:
-            rooms_should_send = set()
+            rooms_should_send = set(sync_config.room_subscriptions.keys())
             for room_id in relevant_room_map:
                 status = await self.connection_store.have_sent_room(
                     sync_config,
