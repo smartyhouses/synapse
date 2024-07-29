@@ -2052,6 +2052,7 @@ class SlidingSyncHandler:
 
         return relevant_room_ids
 
+    @trace
     async def get_to_device_extension_response(
         self,
         sync_config: SlidingSyncConfig,
@@ -2127,6 +2128,7 @@ class SlidingSyncHandler:
             events=messages,
         )
 
+    @trace
     async def get_e2ee_extension_response(
         self,
         sync_config: SlidingSyncConfig,
@@ -2177,6 +2179,7 @@ class SlidingSyncHandler:
             device_unused_fallback_key_types=device_unused_fallback_key_types,
         )
 
+    @trace
     async def get_account_data_extension_response(
         self,
         sync_config: SlidingSyncConfig,
@@ -2267,6 +2270,7 @@ class SlidingSyncHandler:
             account_data_by_room_map=account_data_by_room_map,
         )
 
+    @trace
     async def get_receipts_extension_response(
         self,
         sync_config: SlidingSyncConfig,
