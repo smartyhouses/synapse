@@ -1473,13 +1473,8 @@ class SlidingSyncHandler:
                 connection_token=from_token.connection_position,
                 room_id=room_id,
             )
-            if (
-                room_status.timeline_limit is not None
-                and room_status.timeline_limit < room_sync_config.timeline_limit
-            ):
-                from_bound = None
-                initial = True
-            elif room_status.status == HaveSentRoomFlag.LIVE:
+
+            if room_status.status == HaveSentRoomFlag.LIVE:
                 from_bound = from_token.stream_token.room_key
                 initial = False
             elif room_status.status == HaveSentRoomFlag.PREVIOUSLY:
@@ -1491,6 +1486,12 @@ class SlidingSyncHandler:
                 initial = True
             else:
                 assert_never(room_status.status)
+
+            if (
+                room_status.timeline_limit is not None
+                and room_status.timeline_limit < room_sync_config.timeline_limit
+            ):
+                from_bound = None
 
             set_tag("sliding_sync.from_bound", from_bound)
             set_tag("sliding_sync.room_status", room_status.status)
