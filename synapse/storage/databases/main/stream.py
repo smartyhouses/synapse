@@ -2245,3 +2245,13 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore):
             )
 
         return rows
+
+    def get_rooms_that_might_have_updates(
+        self, room_ids: StrCollection, from_token: RoomStreamToken
+    ) -> StrCollection:
+        """Filters given room IDs down to those that might have updates, i.e.
+        removes rooms that definitely do not have updates.
+        """
+        return self._events_stream_cache.get_entities_changed(
+            room_ids, from_token.stream
+        )
