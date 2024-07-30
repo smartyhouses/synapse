@@ -40,7 +40,8 @@ from synapse.api.constants import (
 )
 from synapse.api.room_versions import RoomVersions
 from synapse.events import EventBase
-from synapse.handlers.sliding_sync import StateValues
+from synapse.handlers.sliding_sync import RoomSyncConfig, StateValues
+from synapse.http.servlet import validate_json_object
 from synapse.rest.client import (
     devices,
     knock,
@@ -54,6 +55,7 @@ from synapse.rest.client import (
 from synapse.server import HomeServer
 from synapse.types import (
     JsonDict,
+    Requester,
     RoomStreamToken,
     SlidingSyncStreamToken,
     StreamKeyType,
@@ -61,6 +63,7 @@ from synapse.types import (
     UserID,
 )
 from synapse.types.handlers import SlidingSyncConfig
+from synapse.types.rest.client import SlidingSyncBody
 from synapse.util import Clock
 from synapse.util.stringutils import random_string
 
@@ -1357,6 +1360,22 @@ class SlidingSyncBase(unittest.HomeserverTestCase):
             raise AssertionError(
                 "Expected `notifier.wait_for_events(...)` to be triggered"
             )
+
+    def make_sync_config(
+        self, user: UserID, requester: Requester, content: JsonDict
+    ) -> SlidingSyncConfig:
+        """Helper function to turn a dict sync body to a sync config"""
+        body = validate_json_object(content, SlidingSyncBody)
+
+        sync_config = SlidingSyncConfig(
+            user=user,
+            requester=requester,
+            conn_id=body.conn_id,
+            lists=body.lists,
+            room_subscriptions=body.room_subscriptions,
+            extensions=body.extensions,
+        )
+        return sync_config
 
 
 class SlidingSyncTestCase(SlidingSyncBase):
@@ -4541,7 +4560,6 @@ class SlidingSyncTestCase(SlidingSyncBase):
         self.helper.send(room_id1, "msg", tok=user1_tok)
 
         timeline_limit = 5
-        conn_id = "conn_id"
         sync_body = {
             "lists": {
                 "foo-list": {
@@ -4587,19 +4605,22 @@ class SlidingSyncTestCase(SlidingSyncBase):
         requester = self.get_success(
             self.hs.get_auth().get_user_by_access_token(user1_tok)
         )
-        sync_config = SlidingSyncConfig(
-            user=requester.user,
-            requester=requester,
-            conn_id=conn_id,
+        sync_config = self.make_sync_config(
+            user=requester.user, requester=requester, content=sync_body
         )
 
         parsed_initial_from_token = self.get_success(
             SlidingSyncStreamToken.from_string(self.store, initial_from_token)
         )
+        assert sync_config.lists
+        room_configs = {
+            room_id1: RoomSyncConfig.from_room_config(sync_config.lists["foo-list"])
+        }
         connection_position = self.get_success(
             sliding_sync_handler.connection_store.record_rooms(
                 sync_config,
-                parsed_initial_from_token,
+                room_configs=room_configs,
+                from_token=parsed_initial_from_token,
                 sent_room_ids=[],
                 unsent_room_ids=[room_id1],
             )
@@ -4649,7 +4670,6 @@ class SlidingSyncTestCase(SlidingSyncBase):
 
         self.helper.send(room_id1, "msg", tok=user1_tok)
 
-        conn_id = "conn_id"
         sync_body = {
             "lists": {
                 "foo-list": {
@@ -4696,19 +4716,24 @@ class SlidingSyncTestCase(SlidingSyncBase):
         requester = self.get_success(
             self.hs.get_auth().get_user_by_access_token(user1_tok)
         )
-        sync_config = SlidingSyncConfig(
+        sync_config = self.make_sync_config(
             user=requester.user,
             requester=requester,
-            conn_id=conn_id,
+            content=sync_body,
         )
 
         parsed_initial_from_token = self.get_success(
             SlidingSyncStreamToken.from_string(self.store, initial_from_token)
         )
+        assert sync_config.lists
+        room_configs = {
+            room_id1: RoomSyncConfig.from_room_config(sync_config.lists["foo-list"])
+        }
         connection_position = self.get_success(
             sliding_sync_handler.connection_store.record_rooms(
                 sync_config,
-                parsed_initial_from_token,
+                room_configs=room_configs,
+                from_token=parsed_initial_from_token,
                 sent_room_ids=[],
                 unsent_room_ids=[room_id1],
             )
@@ -5136,6 +5161,76 @@ class SlidingSyncTestCase(SlidingSyncBase):
             {"room5"},
             exact=True,
         )
+
+    def test_increasing_timeline_range_sends_more_messages(self) -> None:
+        """
+        Test that increasing the timeline limit via room subscriptions sends the
+        room down with more messages in a limited sync.
+        """
+
+        user1_id = self.register_user("user1", "pass")
+        user1_tok = self.login(user1_id, "pass")
+
+        room_id1 = self.helper.create_room_as(user1_id, tok=user1_tok)
+
+        sync_body = {
+            "lists": {
+                "foo-list": {
+                    "ranges": [[0, 1]],
+                    "required_state": [[EventTypes.Create, ""]],
+                    "timeline_limit": 1,
+                }
+            }
+        }
+
+        message_events = []
+        for _ in range(10):
+            resp = self.helper.send(room_id1, "msg", tok=user1_tok)
+            message_events.append(resp["event_id"])
+
+        # Make the first Sliding Sync request
+        response_body, from_token = self.do_sync(sync_body, tok=user1_tok)
+        room_response = response_body["rooms"][room_id1]
+
+        self.assertEqual(room_response["initial"], True)
+        self.assertEqual(room_response["limited"], True)
+
+        # We only expect the last message at first
+        self.assertEqual(
+            [event["event_id"] for event in room_response["timeline"]],
+            message_events[-1:],
+            room_response["timeline"],
+        )
+
+        # We also expect to get the create event state.
+        self.assertEqual(
+            [event["type"] for event in room_response["required_state"]],
+            [EventTypes.Create],
+        )
+
+        # Now do another request with a room subscription with an increased timeline limit
+        sync_body["room_subscriptions"] = {
+            room_id1: {
+                "required_state": [],
+                "timeline_limit": 10,
+            }
+        }
+
+        response_body, _ = self.do_sync(sync_body, since=from_token, tok=user1_tok)
+        room_response = response_body["rooms"][room_id1]
+
+        self.assertNotIn("initial", room_response)
+        self.assertEqual(room_response["limited"], True)
+
+        # Now we expect all the messages
+        self.assertEqual(
+            [event["event_id"] for event in room_response["timeline"]],
+            message_events,
+            room_response["timeline"],
+        )
+
+        # We don't expect to get the room create down, as nothing has changed.
+        self.assertNotIn("required_state", room_response)
 
 
 class SlidingSyncToDeviceExtensionTestCase(SlidingSyncBase):
