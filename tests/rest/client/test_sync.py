@@ -32,13 +32,7 @@ from synapse.api.constants import (
     EventTypes,
     ReceiptTypes,
     RelationTypes,
-<<<<<<< HEAD
-    RoomTypes,
 )
-from synapse.api.room_versions import RoomVersions
-from synapse.events import EventBase
-from synapse.handlers.sliding_sync import RoomSyncConfig, StateValues
-from synapse.http.servlet import validate_json_object
 from synapse.rest.client import (
     devices,
     knock,
@@ -46,28 +40,12 @@ from synapse.rest.client import (
     read_marker,
     receipts,
     room,
-    sendtodevice,
     sync,
-=======
->>>>>>> origin/develop
 )
-from synapse.rest.client import devices, knock, login, read_marker, receipts, room, sync
 from synapse.server import HomeServer
-<<<<<<< HEAD
 from synapse.types import (
     JsonDict,
-    Requester,
-    RoomStreamToken,
-    SlidingSyncStreamToken,
-    StreamKeyType,
-    StreamToken,
-    UserID,
 )
-from synapse.types.handlers import SlidingSyncConfig
-from synapse.types.rest.client import SlidingSyncBody
-=======
-from synapse.types import JsonDict
->>>>>>> origin/develop
 from synapse.util import Clock
 
 from tests import unittest

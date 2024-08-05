@@ -982,7 +982,7 @@ class SlidingSyncRestServlet(RestServlet):
         for list_key, list_result in lists.items():
             serialized_lists[list_key] = {
                 "count": list_result.count,
-                "ops": [encode_operation(op) for op in list_result.ops],
+                # "ops": [encode_operation(op) for op in list_result.ops],
             }
 
         return serialized_lists
