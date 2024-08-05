@@ -941,6 +941,17 @@ class SlidingSyncRestServlet(RestServlet):
             logger.info("Client has disconnected; not serializing response.")
             return 200, {}
 
+        if from_token:
+            for room_id, room in sliding_sync_results.rooms.items():
+                logger.info(
+                    "Sending room %r, initial: %s, limited: %s, events %d: %s",
+                    room_id,
+                    room.initial,
+                    room.limited,
+                    len(room.timeline_events),
+                    [e.event_id for e in room.timeline_events],
+                )
+
         # logger.info("Sliding sync response: %r", sliding_sync_results)
         response_content = await self.encode_response(requester, sliding_sync_results)
 
