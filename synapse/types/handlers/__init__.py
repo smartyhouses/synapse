@@ -182,8 +182,8 @@ class SlidingSyncResult:
                 absent on joined/left rooms
             prev_batch: A token that can be passed as a start parameter to the
                 `/rooms/<room_id>/messages` API to retrieve earlier messages.
-            limited: True if their are more events than fit between the given position and now.
-                Sync again to get more.
+            limited: True if there are more events than `timeline_limit` looking
+                backwards from the `response.pos` to the `request.pos`.
             num_live: The number of timeline events which have just occurred and are not historical.
                 The last N events are 'live' and should be treated as such. This is mostly
                 useful to determine whether a given @mention event should make a noise or not.
@@ -366,7 +366,8 @@ class SlidingSyncResult:
             """The Receipts extension (MSC3960)
 
             Attributes:
-                room_id_to_receipt_map: Mapping from room_id to `m.receipt` event (type, content)
+                room_id_to_receipt_map: Mapping from room_id to `m.receipt` ephemeral
+                    event (type, content)
             """
 
             room_id_to_receipt_map: Mapping[str, JsonMapping]
@@ -374,14 +375,33 @@ class SlidingSyncResult:
             def __bool__(self) -> bool:
                 return bool(self.room_id_to_receipt_map)
 
+        @attr.s(slots=True, frozen=True, auto_attribs=True)
+        class TypingExtension:
+            """The Typing Notification extension (MSC3961)
+
+            Attributes:
+                room_id_to_typing_map: Mapping from room_id to `m.typing` ephemeral
+                    event (type, content)
+            """
+
+            room_id_to_typing_map: Mapping[str, JsonMapping]
+
+            def __bool__(self) -> bool:
+                return bool(self.room_id_to_typing_map)
+
         to_device: Optional[ToDeviceExtension] = None
         e2ee: Optional[E2eeExtension] = None
         account_data: Optional[AccountDataExtension] = None
         receipts: Optional[ReceiptsExtension] = None
+        typing: Optional[TypingExtension] = None
 
         def __bool__(self) -> bool:
             return bool(
-                self.to_device or self.e2ee or self.account_data or self.receipts
+                self.to_device
+                or self.e2ee
+                or self.account_data
+                or self.receipts
+                or self.typing
             )
 
     next_pos: SlidingSyncStreamToken
