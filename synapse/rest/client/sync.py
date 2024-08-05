@@ -944,7 +944,7 @@ class SlidingSyncRestServlet(RestServlet):
         if from_token:
             for room_id, room in sliding_sync_results.rooms.items():
                 logger.info(
-                    "Sending room %r, initial: %s, limited: %s, events %d: %s",
+                    "Sliding Sync: Sending room %r, initial: %s, limited: %s, events %d: %s",
                     room_id,
                     room.initial,
                     room.limited,
