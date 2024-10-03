@@ -9,7 +9,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/Dockerfile
-    image: docker.io/matrixdotorg/synapse:latest
+    image: dockerhub.timeweb.cloud/docker.io/matrixdotorg/synapse:latest
     # Since synapse does not retry to connect to the database, restart upon
     # failure
     restart: unless-stopped
@@ -51,7 +51,7 @@ services:
       - traefik.http.routers.https-synapse.tls.certResolver=le-ssl
 
   db:
-    image: docker.io/postgres:12-alpine
+    image: dockerhub.timeweb.cloud/docker.io/postgres:12-alpine
     # Change that password, of course!
     environment:
       - POSTGRES_USER=synapse
