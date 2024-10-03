@@ -27,7 +27,7 @@ ARG PYTHON_VERSION=3.11
 ###
 # We hardcode the use of Debian bookworm here because this could change upstream
 # and other Dockerfiles used for testing are expecting bookworm.
-FROM docker.io/library/python:${PYTHON_VERSION}-slim-bookworm AS requirements
+FROM dockerhub.timeweb.cloud/python:${PYTHON_VERSION}-slim-bookworm AS requirements
 
 # RUN --mount is specific to buildkit and is documented at
 # https://github.com/moby/buildkit/blob/master/frontend/dockerfile/docs/syntax.md#build-mounts-run---mount.
@@ -87,7 +87,7 @@ RUN if [ -z "$TEST_ONLY_IGNORE_POETRY_LOCKFILE" ]; then \
 ###
 ### Stage 1: builder
 ###
-FROM docker.io/library/python:${PYTHON_VERSION}-slim-bookworm AS builder
+FROM dockerhub.timeweb.cloud/library/python:${PYTHON_VERSION}-slim-bookworm AS builder
 
 # install the OS build deps
 RUN \
@@ -158,7 +158,7 @@ RUN --mount=type=cache,target=/synapse/target,sharing=locked \
 ### Stage 2: runtime
 ###
 
-FROM docker.io/library/python:${PYTHON_VERSION}-slim-bookworm
+FROM dockerhub.timeweb.cloud/library/python:${PYTHON_VERSION}-slim-bookworm
 
 LABEL org.opencontainers.image.url='https://matrix.org/docs/projects/server/synapse'
 LABEL org.opencontainers.image.documentation='https://github.com/element-hq/synapse/blob/master/docker/README.md'
