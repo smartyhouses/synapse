@@ -158,6 +158,7 @@ class SlidingSyncResult:
                 name changes to mark the room as unread and bump it to the top. For
                 encrypted rooms, we just have to consider any activity as a bump because we
                 can't see the content and the client has to figure it out for themselves.
+                This may not be included if there hasn't been a change.
             joined_count: The number of users with membership of join, including the client's
                 own user ID. (same as sync `v2 m.joined_member_count`)
             invited_count: The number of users with membership of invite. (same as sync v2
@@ -193,7 +194,7 @@ class SlidingSyncResult:
         limited: Optional[bool]
         # Only optional because it won't be included for invite/knock rooms with `stripped_state`
         num_live: Optional[int]
-        bump_stamp: int
+        bump_stamp: Optional[int]
         joined_count: Optional[int]
         invited_count: Optional[int]
         notification_count: int
@@ -406,8 +407,8 @@ class StateValues:
     # Include all state events of the given type
     WILDCARD: Final = "*"
     # Lazy-load room membership events (include room membership events for any event
-    # `sender` in the timeline). We only give special meaning to this value when it's a
-    # `state_key`.
+    # `sender` or membership change target in the timeline). We only give special
+    # meaning to this value when it's a `state_key`.
     LAZY: Final = "$LAZY"
     # Subsitute with the requester's user ID. Typically used by clients to get
     # the user's membership.
@@ -640,9 +641,10 @@ class RoomSyncConfig:
             if user_id == StateValues.ME:
                 continue
             # We're lazy-loading membership so we can just return the state we have.
-            # Lazy-loading means we include membership for any event `sender` in the
-            # timeline but since we had to auth those timeline events, we will have the
-            # membership state for them (including from remote senders).
+            # Lazy-loading means we include membership for any event `sender` or
+            # membership change target in the timeline but since we had to auth those
+            # timeline events, we will have the membership state for them (including
+            # from remote senders).
             elif user_id == StateValues.LAZY:
                 continue
             elif user_id == StateValues.WILDCARD:
